@@ -1,451 +1,386 @@
-import React, { useMemo, useState, useEffect } from 'react';
+import React, { useMemo, useState } from 'react';
 import { useBudgetStore } from '../store/budgetStore';
 import {
-    BarChart, Bar, LineChart, Line, XAxis, YAxis, CartesianGrid, Tooltip, Legend, ResponsiveContainer
+    BarChart, Bar, LineChart, Line, XAxis, YAxis, CartesianGrid, Tooltip, Legend, ResponsiveContainer, ReferenceLine
 } from 'recharts';
-import { Plus, TrendingUp, BarChart3, Leaf, Pencil, Check, GripVertical } from 'lucide-react';
+import { ChevronLeft, ChevronRight, BarChart3, TrendingUp, CheckCircle2 } from 'lucide-react';
 import type { BudgetItem } from '../types/budget';
-import { ItemEditorModal } from './ItemEditorModal';
-import { AIAdvisor } from './AIAdvisor';
-
-// DnD Kit Imports
-import {
-    DndContext,
-    closestCenter,
-    KeyboardSensor,
-    PointerSensor,
-    useSensor,
-    useSensors,
-    TouchSensor,
-    MouseSensor
-} from '@dnd-kit/core';
-import type { DragEndEvent } from '@dnd-kit/core';
-import {
-    arrayMove,
-    SortableContext,
-    sortableKeyboardCoordinates,
-    verticalListSortingStrategy,
-    useSortable
-} from '@dnd-kit/sortable';
-import { CSS } from '@dnd-kit/utilities';
-
-// Sortable Item Component
-interface SortableItemProps {
-    item: BudgetItem;
-    status: 'base' | 'modified' | 'added' | 'deleted';
-    original?: BudgetItem;
-    onEdit: (item: BudgetItem, isDeleted: boolean) => void;
-}
-
-const SortableItem = ({ item, status, original, onEdit }: SortableItemProps) => {
-    const {
-        attributes,
-        listeners,
-        setNodeRef,
-        transform,
-        transition,
-        isDragging
-    } = useSortable({ id: item.id });
-
-    const style = {
-        transform: CSS.Transform.toString(transform),
-        transition,
-        zIndex: isDragging ? 10 : 1,
-        opacity: isDragging ? 0.5 : 1,
-    };
-
-    const isDeleted = status === 'deleted';
-    const isModified = status === 'modified';
-    const isAdded = status === 'added';
-
-    return (
-        <div
-            ref={setNodeRef}
-            style={style}
-            className={`flex justify-between items-center p-3 rounded-lg transition-colors touch-manipulation ${isDeleted ? 'bg-gray-100 opacity-70' : 'bg-gray-50 hover:bg-gray-100'
-                }`}
-        >
-            {/* Drag Handle & Content Wrapper */}
-            <div className="flex items-center flex-1 space-x-3 overflow-hidden">
-                <div
-                    {...attributes}
-                    {...listeners}
-                    className="text-gray-300 cursor-grab active:cursor-grabbing p-1 hover:text-gray-500 touch-none"
-                >
-                    <GripVertical size={18} />
-                </div>
-
-                <div
-                    className="flex-1 cursor-pointer"
-                    onClick={() => onEdit(item, isDeleted)}
-                >
-                    <div className="flex items-center space-x-2">
-                        {(isModified || isAdded || isDeleted) && <Leaf size={14} className={isDeleted ? 'text-gray-400' : 'text-green-500'} />}
-
-                        <span className={`font-medium truncate ${isDeleted ? 'line-through text-gray-500' : ''}`}>
-                            {item.name}
-                        </span>
-
-                        {!isDeleted && (
-                            <span className="text-[10px] bg-gray-200 px-1.5 py-0.5 rounded text-gray-600 whitespace-nowrap">
-                                {item.frequencyType === 'monthly' ? '毎月' :
-                                    item.frequencyType === 'yearly' ? '毎年' :
-                                        `${item.interval}ヶ月毎`}
-                            </span>
-                        )}
-                    </div>
-                    <div className="text-xs text-gray-500 truncate">{item.category}</div>
-                </div>
-            </div>
-
-            {/* Amount */}
-            <div className="text-right pl-2 cursor-pointer" onClick={() => onEdit(item, isDeleted)}>
-                <div className={`font-medium whitespace-nowrap ${isDeleted ? 'line-through text-gray-400' : item.type === 'income' ? 'text-green-600' : 'text-red-600'}`}>
-                    {item.type === 'income' ? '+' : '-'}¥{item.amount.toLocaleString()}
-                </div>
-                {(isModified || isDeleted) && original && (
-                    <div className="text-[10px] text-gray-400 whitespace-nowrap">
-                        Ref: ¥{original.amount.toLocaleString()}
-                    </div>
-                )}
-            </div>
-        </div>
-    );
-};
+import { ActualInputModal } from './ActualInputModal';
 
 export const Dashboard: React.FC = () => {
     const {
-        scenarios, comparisonSpan, addItem, removeItem, restoreItem, updateItem,
-        addScenario, updateScenarioName, getMergedItems, getDashboardItems, reorderItems
+        scenarios, getMergedItems,
+        monthlyActuals, setMonthlyActual
     } = useBudgetStore();
 
-    const [isModalOpen, setIsModalOpen] = useState(false);
-    const [editingItem, setEditingItem] = useState<BudgetItem | undefined>(undefined);
-    const [isDeletedItem, setIsDeletedItem] = useState(false);
-    const [activeScenarioIndex, setActiveScenarioIndex] = useState<0 | 1 | 2>(0);
+    // Month Selection State
+    const [currentDate, setCurrentDate] = useState(new Date()); // The selected month
     const [viewMode, setViewMode] = useState<'monthly' | 'cumulative'>('monthly');
 
-    // UI State
-    const [isTanukiFilterOn, setIsTanukiFilterOn] = useState(false);
-    const [isEditingName, setIsEditingName] = useState(false);
-    const [tempName, setTempName] = useState('');
+    // Scenario Comparison State (Slot 1, Slot 2)
+    // Default: Slot 1 is the first available Sim if exists
+    const [comparisonSlots, setComparisonSlots] = useState<[string | null, string | null]>([
+        scenarios.length > 1 ? scenarios[1].id : null,
+        null
+    ]);
 
-    const activeScenario = scenarios[activeScenarioIndex];
+    // Update slots if scenarios are deleted
+    // UseEffect to clean up slots if the selected scenario no longer exists?
+    // Doing it in render logic is safer or useEffect.
+    // Let's just rely on robust map logic.
 
-    // DnD Sensors
-    const sensors = useSensors(
-        useSensor(PointerSensor),
-        useSensor(KeyboardSensor, {
-            coordinateGetter: sortableKeyboardCoordinates,
-        }),
-        useSensor(TouchSensor, {
-            activationConstraint: {
-                delay: 250, // Long press to drag on touch devices
-                tolerance: 5,
-            },
-        }),
-        useSensor(MouseSensor, {
-            activationConstraint: {
-                distance: 10, // Drag distance for mouse
-            },
-        })
-    );
+    // Actual Input Modal State
+    const [isActualModalOpen, setIsActualModalOpen] = useState(false);
+    const [selectedItemForActual, setSelectedItemForActual] = useState<{ item: BudgetItem, monthlyPlan: number } | undefined>(undefined);
 
-    useEffect(() => {
-        if (activeScenario) {
-            setTempName(activeScenario.name);
-            setIsEditingName(false); // Reset editing state when switching tabs
+    // Helpers for Date
+    const getMonthStr = (date: Date) => {
+        const y = date.getFullYear();
+        const m = date.getMonth() + 1;
+        return `${y}-${m.toString().padStart(2, '0')}`;
+    };
+
+    const formatMonthDisplay = (date: Date) => {
+        return `${date.getFullYear()}年${date.getMonth() + 1}月`;
+    };
+
+    const addMonths = (date: Date, months: number) => {
+        const d = new Date(date);
+        d.setMonth(d.getMonth() + months);
+        return d;
+    };
+
+    const currentMonthStr = getMonthStr(currentDate);
+
+    // --- Calculation Logic ---
+
+    // Calculate the "Effective Amount" for a specific item in a specific month
+    // Returns { amount: number, isActual: boolean }
+    const getEffectiveAmount = (scenarioId: string, item: BudgetItem, monthStr: string) => {
+        // 1. Check if there is an Actual
+        const actualKey = `${scenarioId}-${item.id}-${monthStr}`;
+        if (monthlyActuals[actualKey] !== undefined) {
+            return { amount: monthlyActuals[actualKey], isActual: true };
         }
-    }, [activeScenarioIndex, activeScenario]);
 
-    const handleAddItem = () => {
-        if (!activeScenario) return;
-        setEditingItem(undefined);
-        setIsDeletedItem(false);
-        setIsModalOpen(true);
-    };
+        // 2. Calculate Plan amount
+        const [, m] = monthStr.split('-').map(Number);
 
-    const handleEditItem = (item: BudgetItem, isDeleted: boolean) => {
-        setEditingItem(item);
-        setIsDeletedItem(isDeleted);
-        setIsModalOpen(true);
-    };
-
-    const handleSaveItem = (itemData: Omit<BudgetItem, 'id'>) => {
-        if (editingItem) {
-            updateItem(activeScenarioIndex, editingItem.id, itemData);
+        if (item.frequencyType === 'monthly') {
+            return { amount: item.type === 'income' ? item.amount : -item.amount, isActual: false };
+        } else if (item.frequencyType === 'yearly') {
+            if (m === item.startMonth) {
+                return { amount: item.type === 'income' ? item.amount : -item.amount, isActual: false };
+            }
         } else {
-            addItem(activeScenarioIndex, itemData);
+            // Interval based logic
+            // Simple logic: if (m - startMonth) % interval === 0
+            // Handling wrap around simply for MVP:
+            let diff = m - item.startMonth;
+            if (diff < 0) diff += 12;
+            if ((m - item.startMonth) % item.interval === 0) {
+                return { amount: item.type === 'income' ? item.amount : -item.amount, isActual: false };
+            }
         }
+
+        return { amount: 0, isActual: false };
     };
 
-    const handleDeleteItem = () => {
-        if (editingItem) {
-            removeItem(activeScenarioIndex, editingItem.id);
-            setIsModalOpen(false);
-        }
-    };
-
-    const handleRestoreItem = () => {
-        if (editingItem && activeScenarioIndex !== 0) {
-            restoreItem(activeScenarioIndex as 1 | 2, editingItem.id);
-            setIsModalOpen(false);
-        }
-    };
-
-    const handleCreateScenario = (index: 1 | 2) => {
-        const name = index === 1 ? '皮算用プランA' : '皮算用プランB';
-        addScenario(index, name);
-        setActiveScenarioIndex(index);
-    };
-
-    const handleNameSave = () => {
-        if (tempName.trim()) {
-            updateScenarioName(activeScenarioIndex, tempName);
-        }
-        setIsEditingName(false);
-    };
-
-    const handleDragEnd = (event: DragEndEvent) => {
-        const { active, over } = event;
-
-        if (over && active.id !== over.id) {
-            const items = dashboardItems.map(i => i.item.id);
-            const oldIndex = items.indexOf(active.id as string);
-            const newIndex = items.indexOf(over.id as string);
-
-            const newOrder = arrayMove(items, oldIndex, newIndex);
-            reorderItems(activeScenarioIndex, newOrder);
-        }
-    };
-
-    const calculateMonthlyData = (items: BudgetItem[], monthIndex: number): number => {
-        const currentMonth = monthIndex + 1;
-        return items.reduce((total, item) => {
-            if (currentMonth < item.startMonth) return total;
-            if (item.endMonth !== null && currentMonth > item.endMonth) return total;
-            if ((currentMonth - item.startMonth) % item.interval !== 0) return total;
-            return total + (item.type === 'income' ? item.amount : -item.amount);
-        }, 0);
-    };
-
+    // --- Graph Data Generation ---
     const graphData = useMemo(() => {
         const data: any[] = [];
-        let assets = [0, 0, 0];
+        // Generate range: 1 Year View
+        const startOffset = -2;
+        const endOffset = 9;
 
-        for (let i = 0; i < comparisonSpan; i++) {
-            const monthLabel = `${i + 1}ヶ月`;
-            const row: any = { month: monthLabel };
+        // Initialize cumulative assets map for all involved scenarios
+        // Include Base + Slot1 + Slot2 (Use Set to dedup in case of logic errors, though UI blocks it)
+        const activeIds = Array.from(new Set(['base', comparisonSlots[0], comparisonSlots[1]].filter(Boolean))) as string[];
+        let cumulativeAssets: Record<string, number> = {};
+        activeIds.forEach(id => cumulativeAssets[id] = 0);
 
-            [0, 1, 2].forEach((index) => {
-                if (!scenarios[index as 0 | 1 | 2]) return;
-                const items = getMergedItems(index as 0 | 1 | 2);
-                const flow = calculateMonthlyData(items, i);
-                assets[index] += flow;
+        for (let i = startOffset; i <= endOffset; i++) {
+            const date = addMonths(currentDate, i);
+            const mStr = getMonthStr(date);
+            const row: any = {
+                month: mStr, // 2025-01
+                displayMonth: `${date.getFullYear()}年${date.getMonth() + 1}月`, // Axis Label
+                isCurrent: i === 0, // Marker for Red Line
+            };
+
+            activeIds.forEach((id) => {
+                const items = getMergedItems(id);
+                // Simple optimization: check if scenarios actually exist (e.g. if deleted)
+                const scenarioExists = scenarios.some(s => s.id === id);
+                if (!scenarioExists) return;
+
+                const monthlyTotal = items.reduce((sum, item) => {
+                    return sum + getEffectiveAmount(id, item, mStr).amount;
+                }, 0);
+
+                cumulativeAssets[id] += monthlyTotal;
 
                 if (viewMode === 'monthly') {
-                    row[`balance${index}`] = flow;
+                    row[`balance_${id}`] = monthlyTotal;
                 } else {
-                    row[`asset${index}`] = assets[index];
+                    row[`asset_${id}`] = cumulativeAssets[id];
                 }
             });
 
             data.push(row);
         }
         return data;
-    }, [scenarios, comparisonSpan, viewMode, getMergedItems]);
+    }, [currentDate, scenarios, monthlyActuals, comparisonSlots, viewMode, getMergedItems]);
 
-    const dashboardItems = useMemo(() => {
-        let items = getDashboardItems(activeScenarioIndex);
-        if (isTanukiFilterOn && activeScenarioIndex !== 0) {
-            items = items.filter(i => i.status !== 'base');
-        }
-        return items;
-    }, [activeScenarioIndex, scenarios, isTanukiFilterOn, getDashboardItems]);
+    // --- Current Month Items List ---
+    const currentMonthItems = useMemo(() => {
+        // Logic: Show items for the "Most Significant" visible scenario.
+        // Priority: Slot 2 > Slot 1 > Base
+        let targetId = 'base';
+        if (comparisonSlots[0]) targetId = comparisonSlots[0];
+        if (comparisonSlots[1]) targetId = comparisonSlots[1];
+
+        // Ensure it still exists
+        if (!scenarios.some(s => s.id === targetId)) targetId = 'base';
+
+        const items = getMergedItems(targetId);
+        const mStr = currentMonthStr;
+
+        return items.map(item => {
+            const { amount, isActual } = getEffectiveAmount(targetId, item, mStr);
+            const planned = item.type === 'income' ? item.amount : -item.amount;
+            const isRelevant = amount !== 0 || (item.frequencyType === 'monthly');
+
+            if (!isRelevant) return null;
+
+            return {
+                item,
+                scenarioId: targetId,
+                scenarioName: scenarios.find(s => s.id === targetId)?.name,
+                displayAmount: amount,
+                plannedAmount: planned,
+                isActual
+            };
+        }).filter(Boolean); // Remove nulls
+    }, [currentDate, comparisonSlots, scenarios, getMergedItems, monthlyActuals]);
+
+
+    // Handlers
+    const handlePrevMonth = () => setCurrentDate(addMonths(currentDate, -1));
+    const handleNextMonth = () => setCurrentDate(addMonths(currentDate, 1));
+
+    const handleItemClick = (data: any) => {
+        setSelectedItemForActual({
+            item: data.item,
+            monthlyPlan: Math.abs(data.plannedAmount) // Pass absolute value for input
+        });
+        setIsActualModalOpen(true);
+    };
+
+    const handleActualSave = (amount: number) => {
+        if (!selectedItemForActual) return;
+        const { item } = selectedItemForActual;
+        const signedAmount = item.type === 'income' ? amount : -amount;
+
+        // Find target scenario same as list logic
+        let targetId = 'base';
+        if (comparisonSlots[0]) targetId = comparisonSlots[0];
+        if (comparisonSlots[1]) targetId = comparisonSlots[1];
+        if (!scenarios.some(s => s.id === targetId)) targetId = 'base';
+
+        setMonthlyActual(targetId, item.id, currentMonthStr, signedAmount);
+    };
+
 
     return (
         <div className="space-y-6">
-            <div className="space-y-6">
-                {/* Graph Section */}
-                <div className="bg-surface p-4 rounded-xl shadow-sm">
-                    <div className="flex justify-between items-center mb-4">
-                        <h2 className="text-lg font-semibold">
-                            {viewMode === 'monthly' ? '月次収支推移' : '資産推移シミュレーション'}
-                        </h2>
-                        <div className="flex bg-gray-100 rounded-lg p-1">
-                            <button
-                                onClick={() => setViewMode('monthly')}
-                                className={`p-1.5 rounded-md transition-colors ${viewMode === 'monthly' ? 'bg-white shadow-sm text-primary' : 'text-gray-400'}`}
-                            >
-                                <BarChart3 size={20} />
-                            </button>
-                            <button
-                                onClick={() => setViewMode('cumulative')}
-                                className={`p-1.5 rounded-md transition-colors ${viewMode === 'cumulative' ? 'bg-white shadow-sm text-primary' : 'text-gray-400'}`}
-                            >
-                                <TrendingUp size={20} />
-                            </button>
-                        </div>
-                    </div>
-
-                    <div className="h-64 w-full">
-                        <ResponsiveContainer width="100%" height="100%">
-                            {viewMode === 'monthly' ? (
-                                <BarChart data={graphData}>
-                                    <CartesianGrid strokeDasharray="3 3" vertical={false} />
-                                    <XAxis dataKey="month" tick={{ fontSize: 10 }} interval={2} />
-                                    <YAxis tick={{ fontSize: 10 }} tickFormatter={(value) => `¥${value / 10000}万`} />
-                                    <Tooltip formatter={(value: number) => `¥${value.toLocaleString()}`} />
-                                    <Legend />
-                                    <Bar dataKey="balance0" name="現在の家計" fill="#9CA3AF" radius={[4, 4, 0, 0]} />
-                                    {scenarios[1] && <Bar dataKey="balance1" name={scenarios[1].name} fill="#4F46E5" radius={[4, 4, 0, 0]} />}
-                                    {scenarios[2] && <Bar dataKey="balance2" name={scenarios[2].name} fill="#10B981" radius={[4, 4, 0, 0]} />}
-                                </BarChart>
-                            ) : (
-                                <LineChart data={graphData}>
-                                    <CartesianGrid strokeDasharray="3 3" vertical={false} />
-                                    <XAxis dataKey="month" tick={{ fontSize: 10 }} interval={2} />
-                                    <YAxis tick={{ fontSize: 10 }} tickFormatter={(value) => `¥${value / 10000}万`} />
-                                    <Tooltip formatter={(value: number) => `¥${value.toLocaleString()}`} />
-                                    <Legend />
-                                    <Line type="monotone" dataKey="asset0" name="現在の家計" stroke="#9CA3AF" strokeWidth={2} dot={false} />
-                                    {scenarios[1] && <Line type="monotone" dataKey="asset1" name={scenarios[1].name} stroke="#4F46E5" strokeWidth={2} dot={false} />}
-                                    {scenarios[2] && <Line type="monotone" dataKey="asset2" name={scenarios[2].name} stroke="#10B981" strokeWidth={2} dot={false} />}
-                                </LineChart>
-                            )}
-                        </ResponsiveContainer>
-                    </div>
+            {/* Top Bar: Selector & Month */}
+            <div className="flex flex-col space-y-4 bg-white p-4 rounded-xl shadow-sm">
+                <div className="flex justify-between items-center">
+                    <button onClick={handlePrevMonth} className="p-2 hover:bg-gray-100 rounded-full text-gray-500">
+                        <ChevronLeft />
+                    </button>
+                    <h2 className="text-xl font-bold text-gray-800">
+                        {formatMonthDisplay(currentDate)}
+                    </h2>
+                    <button onClick={handleNextMonth} className="p-2 hover:bg-gray-100 rounded-full text-gray-500">
+                        <ChevronRight />
+                    </button>
                 </div>
 
-                {/* Scenario Tabs */}
-                <div className="flex space-x-2 border-b border-gray-200 pb-1 overflow-x-auto">
-                    {[0, 1, 2].map((index) => {
-                        const scenario = scenarios[index as 0 | 1 | 2];
-                        const isActive = activeScenarioIndex === index;
-                        return (
-                            <button
-                                key={index}
-                                onClick={() => {
-                                    if (scenario) setActiveScenarioIndex(index as 0 | 1 | 2);
-                                    else if (index !== 0) handleCreateScenario(index as 1 | 2);
-                                }}
-                                className={`px-4 py-2 text-sm font-medium rounded-t-lg transition-colors whitespace-nowrap ${isActive
-                                    ? 'bg-white text-primary border-b-2 border-primary'
-                                    : scenario
-                                        ? 'text-gray-700 hover:bg-gray-50'
-                                        : 'text-gray-400 hover:bg-gray-50'
-                                    }`}
-                            >
-                                {scenario ? scenario.name : '未設定'}
-                            </button>
-                        );
-                    })}
-                </div>
+                {/* Scenario Comparison Selectors */}
+                <div className="flex flex-col space-y-2">
+                    {/* Fixed Base */}
+                    <div className="flex items-center space-x-2 p-2 bg-gray-50 rounded-lg border border-gray-100">
+                        <div className="w-3 h-3 rounded-full bg-gray-500 flex-shrink-0" />
+                        <span className="text-sm font-bold text-gray-700">現在の家計</span>
+                        <span className="text-xs text-gray-400 ml-auto">固定</span>
+                    </div>
 
-                {/* Items List */}
-                <div className="grid grid-cols-1 gap-4">
-                    <div className="bg-surface p-4 rounded-xl shadow-sm border border-gray-100">
-                        {activeScenario ? (
-                            <>
-                                <div className="flex justify-between items-center mb-3">
-                                    <div className="flex items-center space-x-2">
-                                        {isEditingName ? (
-                                            <div className="flex items-center space-x-1">
-                                                <input
-                                                    type="text"
-                                                    value={tempName}
-                                                    onChange={(e) => setTempName(e.target.value)}
-                                                    className="border rounded px-2 py-1 text-sm"
-                                                    autoFocus
-                                                />
-                                                <button onClick={handleNameSave} className="text-green-600 hover:bg-green-50 p-1 rounded">
-                                                    <Check size={16} />
-                                                </button>
-                                            </div>
-                                        ) : (
-                                            <>
-                                                <h3 className="font-semibold text-gray-700">{activeScenario.name}</h3>
-                                                {activeScenarioIndex !== 0 && (
-                                                    <button
-                                                        onClick={() => setIsEditingName(true)}
-                                                        className="text-gray-400 hover:text-gray-600 p-1 rounded"
-                                                    >
-                                                        <Pencil size={14} />
-                                                    </button>
-                                                )}
-                                            </>
-                                        )}
-                                    </div>
-
-                                    <div className="flex items-center space-x-2">
-                                        {activeScenarioIndex !== 0 && (
-                                            <button
-                                                onClick={() => setIsTanukiFilterOn(!isTanukiFilterOn)}
-                                                className={`flex items-center space-x-1 px-2 py-1 rounded text-xs transition-colors ${isTanukiFilterOn
-                                                    ? 'bg-green-100 text-green-700 border border-green-200'
-                                                    : 'bg-gray-100 text-gray-500 border border-transparent'
-                                                    }`}
-                                            >
-                                                <Leaf size={12} />
-                                                <span>皮算用のみ</span>
-                                            </button>
-                                        )}
-                                        <button
-                                            onClick={handleAddItem}
-                                            className="text-primary hover:bg-primary/10 p-1 rounded"
-                                        >
-                                            <Plus size={20} />
-                                        </button>
-                                    </div>
-                                </div>
-
-                                <DndContext
-                                    sensors={sensors}
-                                    collisionDetection={closestCenter}
-                                    onDragEnd={handleDragEnd}
+                    {/* Comparison Slot 1 */}
+                    <div className="flex items-center space-x-2 p-1 rounded-lg border border-gray-100">
+                        <div className="w-3 h-3 rounded-full bg-indigo-600 flex-shrink-0 ml-1" />
+                        <select
+                            value={comparisonSlots[0] || ''}
+                            onChange={(e) => {
+                                const val = e.target.value || null;
+                                setComparisonSlots(prev => [val, prev[1]]);
+                            }}
+                            className="w-full bg-transparent text-sm p-1 focus:outline-none text-gray-700 font-medium"
+                        >
+                            <option value="">(未選択)</option>
+                            {scenarios.filter(s => s.id !== 'base').map(s => (
+                                <option
+                                    key={s.id}
+                                    value={s.id}
+                                    disabled={s.id === comparisonSlots[1]}
+                                    className={s.id === comparisonSlots[1] ? 'text-gray-400' : ''}
                                 >
-                                    <SortableContext
-                                        items={dashboardItems.map(i => i.item.id)}
-                                        strategy={verticalListSortingStrategy}
-                                    >
-                                        <div className="space-y-2">
-                                            {dashboardItems.map((data) => (
-                                                <SortableItem
-                                                    key={data.item.id}
-                                                    {...data}
-                                                    onEdit={handleEditItem}
-                                                />
-                                            ))}
-                                            {dashboardItems.length === 0 && (
-                                                <div className="text-center text-gray-400 py-4 text-sm">
-                                                    {isTanukiFilterOn ? '皮算用（変更・追加）項目はありません。' : '項目がありません。'}
-                                                </div>
-                                            )}
-                                        </div>
-                                    </SortableContext>
-                                </DndContext>
-                            </>
-                        ) : (
-                            <div className="text-center text-gray-400 py-8 text-sm">
-                                このプランは未設定です。<br />
-                                タブをクリックして新しい皮算用プランを作成してください。
-                            </div>
-                        )}
+                                    {s.name} {s.id === comparisonSlots[1] ? '(選択済)' : ''}
+                                </option>
+                            ))}
+                        </select>
+                    </div>
+
+                    {/* Comparison Slot 2 */}
+                    <div className="flex items-center space-x-2 p-1 rounded-lg border border-gray-100">
+                        <div className="w-3 h-3 rounded-full bg-emerald-500 flex-shrink-0 ml-1" />
+                        <select
+                            value={comparisonSlots[1] || ''}
+                            onChange={(e) => {
+                                const val = e.target.value || null;
+                                setComparisonSlots(prev => [prev[0], val]);
+                            }}
+                            className="w-full bg-transparent text-sm p-1 focus:outline-none text-gray-700 font-medium"
+                        >
+                            <option value="">(未選択)</option>
+                            {scenarios.filter(s => s.id !== 'base').map(s => (
+                                <option
+                                    key={s.id}
+                                    value={s.id}
+                                    disabled={s.id === comparisonSlots[0]}
+                                    className={s.id === comparisonSlots[0] ? 'text-gray-400' : ''}
+                                >
+                                    {s.name} {s.id === comparisonSlots[0] ? '(選択済)' : ''}
+                                </option>
+                            ))}
+                        </select>
+                    </div>
+                </div>
+            </div>
+
+            {/* Graph Section */}
+            <div className="bg-white p-4 rounded-xl shadow-sm">
+                <div className="flex justify-between items-center mb-4">
+                    <h2 className="text-sm font-semibold text-gray-500">推移グラフ</h2>
+                    <div className="flex bg-gray-100 rounded-lg p-1">
+                        <button
+                            onClick={() => setViewMode('monthly')}
+                            className={`p-1.5 rounded-md transition-colors ${viewMode === 'monthly' ? 'bg-white shadow-sm text-primary' : 'text-gray-400'}`}
+                        >
+                            <BarChart3 size={18} />
+                        </button>
+                        <button
+                            onClick={() => setViewMode('cumulative')}
+                            className={`p-1.5 rounded-md transition-colors ${viewMode === 'cumulative' ? 'bg-white shadow-sm text-primary' : 'text-gray-400'}`}
+                        >
+                            <TrendingUp size={18} />
+                        </button>
                     </div>
                 </div>
 
-                <ItemEditorModal
-                    isOpen={isModalOpen}
-                    onClose={() => setIsModalOpen(false)}
-                    onSave={handleSaveItem}
-                    onDelete={handleDeleteItem}
-                    onRestore={handleRestoreItem}
-                    initialItem={editingItem}
-                    isDeleted={isDeletedItem}
-                />
+                <div className="h-64 w-full">
+                    <ResponsiveContainer width="100%" height="100%">
+                        {viewMode === 'monthly' ? (
+                            <BarChart data={graphData}>
+                                <CartesianGrid strokeDasharray="3 3" vertical={false} />
+                                <XAxis dataKey="displayMonth" tick={{ fontSize: 10 }} interval={2} />
+                                <YAxis tick={{ fontSize: 10 }} tickFormatter={(value) => `¥${value / 10000}万`} />
+                                <Tooltip formatter={(value: number) => `¥${value.toLocaleString()}`} />
+                                {/* Red Cursor Line for Current Selected Month */}
+                                <ReferenceLine x={formatMonthDisplay(currentDate)} stroke="red" strokeWidth={2} {...{ isFront: true } as any} />
 
-                <AIAdvisor activeScenarioIndex={activeScenarioIndex} />
+                                <Bar dataKey="balance_base" name="現在の家計" fill="#6B7280" radius={[4, 4, 0, 0]} />
+                                {comparisonSlots[0] && <Bar dataKey={`balance_${comparisonSlots[0]}`} name={scenarios.find(s => s.id === comparisonSlots[0])?.name || ''} fill="#4F46E5" radius={[4, 4, 0, 0]} />}
+                                {comparisonSlots[1] && <Bar dataKey={`balance_${comparisonSlots[1]}`} name={scenarios.find(s => s.id === comparisonSlots[1])?.name || ''} fill="#10B981" radius={[4, 4, 0, 0]} />}
+                            </BarChart>
+                        ) : (
+                            <LineChart data={graphData}>
+                                <CartesianGrid strokeDasharray="3 3" vertical={false} />
+                                <XAxis dataKey="displayMonth" tick={{ fontSize: 10 }} interval={2} />
+                                <YAxis tick={{ fontSize: 10 }} tickFormatter={(value) => `¥${value / 10000}万`} />
+                                <Tooltip formatter={(value: number) => `¥${value.toLocaleString()}`} />
+                                <Legend />
+                                <ReferenceLine x={formatMonthDisplay(currentDate)} stroke="red" strokeWidth={2} />
+
+                                <Line type="monotone" dataKey="asset_base" name="現在の家計" stroke="#6B7280" strokeWidth={2} dot={false} />
+                                {comparisonSlots[0] && <Line type="monotone" dataKey={`asset_${comparisonSlots[0]}`} name={scenarios.find(s => s.id === comparisonSlots[0])?.name || ''} stroke="#4F46E5" strokeWidth={2} dot={false} />}
+                                {comparisonSlots[1] && <Line type="monotone" dataKey={`asset_${comparisonSlots[1]}`} name={scenarios.find(s => s.id === comparisonSlots[1])?.name || ''} stroke="#10B981" strokeWidth={2} dot={false} />}
+                            </LineChart>
+                        )}
+                    </ResponsiveContainer>
+                </div>
             </div>
+
+            {/* Items List (Actuals Entry) */}
+            <div className="space-y-3 pb-20">
+                <div className="flex items-center justify-between px-2">
+                    <h3 className="font-bold text-gray-700">今月の収支・実績</h3>
+                    <p className="text-xs text-gray-400">タップして実績を入力</p>
+                </div>
+
+                {currentMonthItems.length > 0 ? (
+                    currentMonthItems.map((data: any) => (
+                        <div
+                            key={data.item.id}
+                            onClick={() => handleItemClick(data)}
+                            className={`flex justify-between items-center p-4 rounded-xl border transition-all active:scale-98 cursor-pointer ${data.isActual
+                                ? 'bg-white border-green-200 shadow-sm ring-1 ring-green-100'
+                                : 'bg-white border-gray-100 hover:border-blue-200'
+                                }`}
+                        >
+                            <div className="flex items-center space-x-3">
+                                {data.isActual ? (
+                                    <div className="text-green-500"><CheckCircle2 size={20} /></div>
+                                ) : (
+                                    <div className="w-5 h-5 rounded-full border-2 border-gray-200" />
+                                )}
+                                <div>
+                                    <div className="font-bold text-gray-800">{data.item.name}</div>
+                                    <div className="text-xs text-gray-400">{data.item.category}</div>
+                                </div>
+                            </div>
+
+                            <div className="text-right">
+                                <div className={`font-bold text-lg ${data.item.type === 'income' ? 'text-green-600' : 'text-red-500'}`}>
+                                    {data.item.type === 'income' ? '+' : '-'}¥{Math.abs(data.displayAmount).toLocaleString()}
+                                </div>
+                                <div className="text-xs text-gray-400">
+                                    {data.isActual ? (
+                                        <span className="text-green-600 font-medium">実績確定</span>
+                                    ) : (
+                                        <span>予定: ¥{Math.abs(data.plannedAmount).toLocaleString()}</span>
+                                    )}
+                                </div>
+                            </div>
+                        </div>
+                    ))
+                ) : (
+                    <div className="text-center py-10 text-gray-400 bg-gray-50 rounded-xl">
+                        この月の項目はありません。
+                    </div>
+                )}
+            </div>
+
+            <ActualInputModal
+                isOpen={isActualModalOpen}
+                onClose={() => setIsActualModalOpen(false)}
+                onSave={handleActualSave}
+                item={selectedItemForActual?.item}
+                month={currentMonthStr}
+                plannedAmount={selectedItemForActual?.monthlyPlan || 0}
+                initialActual={selectedItemForActual?.item ? monthlyActuals[selectedItemForActual.item.id] : undefined}
+            />
         </div>
     );
 };

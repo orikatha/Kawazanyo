@@ -38,3 +38,10 @@ export interface MonthlyData {
     baseAsset: number; // Cumulative asset for Base
     simAsset: number; // Cumulative asset for Simulation
 }
+
+export interface MonthlyActual {
+    scenarioId: string;
+    itemId: string;
+    month: string; // YYYY-MM
+    amount: number;
+}

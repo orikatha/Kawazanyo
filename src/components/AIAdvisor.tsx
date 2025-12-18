@@ -1,21 +1,18 @@
-import React, { useState, useMemo, useEffect } from 'react';
+import React, { useState, useMemo } from 'react';
 import { useBudgetStore } from '../store/budgetStore';
 import { X, Lightbulb, TrendingUp, TrendingDown } from 'lucide-react';
 import type { BudgetItem } from '../types/budget';
 
-interface AIAdvisorProps {
-    activeScenarioIndex: 0 | 1 | 2;
-}
+// Removed Props as we don't need activeScenarioIndex passed down if we look at state,
+// But for Advisor logic, we probably want to advise on the "Current Active" Plan?
+// In Dashboard, there isn't a single "Active" plan...
+// Let's assume Advisor talks about "Base vs Best Visible Sim" or just general advice.
+// For now, let's keep it simple and just show general advice + stats if scenarios exist.
 
-export const AIAdvisor: React.FC<AIAdvisorProps> = ({ activeScenarioIndex }) => {
+export const AIAdvisor: React.FC = () => {
     const [isOpen, setIsOpen] = useState(false);
     const [currentTipIndex, setCurrentTipIndex] = useState(0);
     const { scenarios, getMergedItems } = useBudgetStore();
-
-    // Reset tip index when scenario changes
-    useEffect(() => {
-        setCurrentTipIndex(0);
-    }, [activeScenarioIndex]);
 
     const calculateAnnualBalance = (items: BudgetItem[]) => {
         return items.reduce((total, item) => {
@@ -25,7 +22,6 @@ export const AIAdvisor: React.FC<AIAdvisorProps> = ({ activeScenarioIndex }) => 
             } else if (item.frequencyType === 'yearly') {
                 annualAmount = item.amount;
             } else {
-                // Custom interval (e.g., every 2 months)
                 annualAmount = item.amount * (12 / item.interval);
             }
             return total + (item.type === 'income' ? annualAmount : -annualAmount);
@@ -35,13 +31,11 @@ export const AIAdvisor: React.FC<AIAdvisorProps> = ({ activeScenarioIndex }) => 
     const advice = useMemo(() => {
         const tips: { text: string; type: 'positive' | 'negative' | 'neutral'; icon?: React.ReactNode }[] = [];
 
-        const activeScenario = scenarios[activeScenarioIndex];
-        const isSimActive = activeScenarioIndex !== 0;
-
-        // 1. Scenario Specific Advice
-        if (isSimActive && activeScenario) {
-            const baseItems = getMergedItems(0);
-            const simItems = getMergedItems(activeScenarioIndex);
+        // 1. Sim vs Base Comparison (Take the last created Sim)
+        if (scenarios.length > 1) {
+            const baseItems = getMergedItems('base');
+            const sim = scenarios[scenarios.length - 1]; // Compare latest
+            const simItems = getMergedItems(sim.id);
 
             const baseBalance = calculateAnnualBalance(baseItems);
             const simBalance = calculateAnnualBalance(simItems);
@@ -49,41 +43,34 @@ export const AIAdvisor: React.FC<AIAdvisorProps> = ({ activeScenarioIndex }) => 
 
             if (diff > 0) {
                 tips.push({
-                    text: `おめでとうございます！このプランなら、年間で約${(diff / 10000).toFixed(1)}万円の収支改善が見込めますよ！`,
+                    text: `最新のプラン「${sim.name}」なら、現在の家計より年間で約${(diff / 10000).toFixed(1)}万円の収支改善が見込めますよ！`,
                     type: 'positive',
                     icon: <TrendingUp className="text-green-500" size={20} />
                 });
             } else if (diff < 0) {
                 tips.push({
-                    text: `むむっ…このプランだと、年間で約${(Math.abs(diff) / 10000).toFixed(1)}万円、収支が悪化してしまいます。支出を見直してみませんか？`,
+                    text: `プラン「${sim.name}」だと、年間で約${(Math.abs(diff) / 10000).toFixed(1)}万円、支出が増えそうです。無理のない範囲か確認してみましょう。`,
                     type: 'negative',
                     icon: <TrendingDown className="text-red-500" size={20} />
                 });
-            } else {
-                tips.push({
-                    text: `現在の家計と収支は変わりません。項目を並べ替えたりして、シミュレーションを楽しんでくださいね！`,
-                    type: 'neutral'
-                });
             }
         } else {
-            tips.push({ text: "家計簿へようこそ！まずは「＋」ボタンから、現在の収入と支出を入力して現状を把握しましょう。", type: 'neutral' });
+            tips.push({ text: "家計簿へようこそ！「皮算用」タブで新しいプランを作って、未来の家計をシミュレーションしてみましょう。", type: 'neutral' });
         }
 
-        // 2. General Budgeting Tips (Randomized or cycled)
+        // 2. General Budgeting Tips
         const generalTips = [
-            "固定費（家賃、通信費、サブスク）の見直しは、一度やるだけでずっと節約効果が続くのでおすすめです！",
-            "「使途不明金」を減らすだけで、年間数万円の節約になることも。レシートを撮る習慣をつけてみましょう。",
-            "1000円単位でざっくり管理するのが長続きのコツです。1円単位で合わせようとすると疲れちゃいますからね。",
-            "ボーナスは「ないもの」として生活費を組み立てると、貯蓄スピードが格段に上がりますよ！",
-            "コンビニに寄る回数を週1回減らすだけでも、年間では大きな節約になります。",
-            "欲しいものがあったら、3日間だけ待ってみましょう。「本当に必要か？」を考える良い冷却期間になります。"
+            "固定費（家賃、通信費）の見直しは、節約効果が長く続くのでおすすめです。",
+            "1日1回財布を開く回数を減らすだけでも、無駄遣いは減らせますよ。",
+            "ボーナスは「ないもの」として毎月の生活費を設計するのが貯蓄のコツです。",
+            "「欲しい」と思ったら3日待ってみましょう。衝動買いを防げます。",
+            "1000円単位でざっくり管理するのが長続きの秘訣です。"
         ];
 
-        // Add a few general tips
         generalTips.forEach(tip => tips.push({ text: tip, type: 'neutral' }));
 
         return tips;
-    }, [scenarios, activeScenarioIndex, getMergedItems]);
+    }, [scenarios, getMergedItems]);
 
     const currentAdvice = advice[currentTipIndex % advice.length];
 
@@ -92,7 +79,7 @@ export const AIAdvisor: React.FC<AIAdvisorProps> = ({ activeScenarioIndex }) => 
     };
 
     return (
-        <div className="fixed bottom-6 right-6 z-50 flex flex-col items-end pointer-events-none">
+        <div className="fixed bottom-24 right-6 z-50 flex flex-col items-end pointer-events-none">
             {/* Chat Bubble */}
             {isOpen && (
                 <div className="mb-4 bg-white p-4 rounded-2xl shadow-xl border border-gray-100 w-80 pointer-events-auto animate-in fade-in slide-in-from-bottom-4">
@@ -144,7 +131,6 @@ export const AIAdvisor: React.FC<AIAdvisorProps> = ({ activeScenarioIndex }) => 
                 ) : (
                     <>
                         <span className="text-2xl group-hover:animate-bounce">🦝</span>
-                        {/* Notification Dot - Show if it's a simulation and we have a positive result? Maybe later. */}
                     </>
                 )}
             </button>

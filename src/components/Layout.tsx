@@ -1,11 +1,11 @@
 import React, { useState } from 'react';
-import { LayoutDashboard, MessageSquare, Settings, HelpCircle } from 'lucide-react';
+import { LayoutDashboard, MessageSquare, Settings, HelpCircle, Pencil } from 'lucide-react';
 import { HelpOverlay } from './HelpOverlay';
 
 interface LayoutProps {
     children: React.ReactNode;
-    currentTab: 'dashboard' | 'advisor' | 'settings';
-    onTabChange: (tab: 'dashboard' | 'advisor' | 'settings') => void;
+    currentTab: 'dashboard' | 'plans' | 'advisor' | 'settings';
+    onTabChange: (tab: 'dashboard' | 'plans' | 'advisor' | 'settings') => void;
 }
 
 import { Settings as SettingsComponent } from './Settings';
@@ -40,7 +40,15 @@ export const Layout: React.FC<LayoutProps> = ({ children, currentTab, onTabChang
                             }`}
                     >
                         <LayoutDashboard size={24} />
-                        <span className="text-xs">家計簿</span>
+                        <span className="text-[10px]">家計簿</span>
+                    </button>
+                    <button
+                        onClick={() => onTabChange('plans')}
+                        className={`flex flex-col items-center space-y-1 ${currentTab === 'plans' ? 'text-primary' : 'text-gray-400'
+                            }`}
+                    >
+                        <Pencil size={24} />
+                        <span className="text-[10px]">皮算用</span>
                     </button>
                     <button
                         onClick={() => onTabChange('advisor')}
@@ -48,7 +56,7 @@ export const Layout: React.FC<LayoutProps> = ({ children, currentTab, onTabChang
                             }`}
                     >
                         <MessageSquare size={24} />
-                        <span className="text-xs">相談</span>
+                        <span className="text-[10px]">相談</span>
                     </button>
                     <button
                         onClick={() => setIsSettingsOpen(true)}
